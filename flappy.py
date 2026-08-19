@@ -1,7 +1,47 @@
 import pygame
 import random
 import sys
-import os 
+from pathlib import Path
+
+
+BASE_DIR = Path(__file__).resolve().parent
+ASSET_DIRS = (
+    BASE_DIR / "assets",
+    BASE_DIR / "Cloudinary_Archive_2026-08-19_17_34_3_Originals",
+)
+HIGH_SCORE_FILE = str(BASE_DIR / "high_score.txt")
+
+
+def resolve_asset_path(filename):
+    """Find an asset by its normal name or its uploaded asset filename."""
+    search_dirs = (BASE_DIR, *ASSET_DIRS)
+    for directory in search_dirs:
+        direct_path = directory / filename
+        if direct_path.exists():
+            return str(direct_path)
+
+    normalized_name = filename.lower().replace(" ", "_")
+    name_stem = normalized_name.rsplit(".", 1)[0]
+    for directory in ASSET_DIRS:
+        if not directory.exists():
+            continue
+        for path in directory.iterdir():
+            normalized_path = path.name.lower().replace(" ", "_")
+            if normalized_path.startswith(name_stem):
+                return str(path)
+
+    raise FileNotFoundError(f"Asset not found: {filename}")
+
+
+def load_high_score():
+    try:
+        return int(Path(HIGH_SCORE_FILE).read_text(encoding="utf-8").strip())
+    except (FileNotFoundError, ValueError):
+        return 0
+
+
+def save_high_score(value):
+    Path(HIGH_SCORE_FILE).write_text(str(value), encoding="utf-8")
 
 
 try:
@@ -9,7 +49,7 @@ try:
     pygame.mixer.init() 
     
   
-    sound_file_path = os.path.join('.', 'jump_sound.mp3.mpeg')
+    sound_file_path = resolve_asset_path("jump_sound.mp3")
 
   
     JUMP_SOUND = pygame.mixer.Sound(sound_file_path)
@@ -23,7 +63,7 @@ except pygame.error as e:
     SOUND_LOADED = False
 
 try:
-    background_music_path = os.path.join('.', 'background music.mp3')
+    background_music_path = resolve_asset_path("background music.mp3")
     pygame.mixer.music.load(background_music_path)
     pygame.mixer.music.set_volume(0.25)
     pygame.mixer.music.play(-1)
@@ -56,7 +96,7 @@ large_font = pygame.font.SysFont("Arial", 48)
 
 
 try:
-    bird_image = pygame.image.load(os.path.join('.', 'bird.png')).convert_alpha()
+    bird_image = pygame.image.load(resolve_asset_path("bird.png")).convert_alpha()
     
     BIRD_WIDTH = 34
     BIRD_HEIGHT = 24 
@@ -154,101 +194,97 @@ def start_screen():
         clock.tick(30)
 
 
-start_screen()
+def main():
+    global bird_y, bird_velocity, pipes, score, time_since_last_pipe
 
+    start_screen()
 
-bird_y = HEIGHT // 2
-bird_velocity = 0
-pipes = [create_pipe()] 
-score = 0
-time_since_last_pipe = 0
-pipe_frequency = 1500 
+    bird_y = HEIGHT // 2
+    bird_velocity = 0
+    pipes = [create_pipe()]
+    score = 0
+    time_since_last_pipe = 0
+    pipe_frequency = 1500
 
+    running = True
+    game_active = True
 
-running = True
-game_active = True
+    while running:
+        dt = clock.tick(FPS)
+        screen.fill(BLUE)
 
-while running:
-   
-    dt = clock.tick(FPS)
-    screen.fill(BLUE)
+        restart_button = None
+        if not game_active:
+            restart_button = pygame.Rect(WIDTH // 2 - 75, HEIGHT // 2 + 80, 150, 60)
 
-    restart_button = None
-    if not game_active:
-        restart_button = pygame.Rect(WIDTH // 2 - 75, HEIGHT // 2 + 80, 150, 60)
-   
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            running = False
-        
-        if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE and game_active:
-            bird_velocity = jump_strength
-           
-            if SOUND_LOADED and JUMP_SOUND:
-                JUMP_SOUND.play()
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
 
-        if event.type == pygame.MOUSEBUTTONDOWN and not game_active and restart_button is not None:
-            if restart_button.collidepoint(event.pos):
-                reset_game()
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE and game_active:
+                bird_velocity = jump_strength
+                if SOUND_LOADED and JUMP_SOUND:
+                    JUMP_SOUND.play()
 
-    if game_active:
-       
-        bird_velocity += gravity
-        bird_y += bird_velocity
-        
-     
-        bird_rect = pygame.Rect(
-            bird_x - BIRD_WIDTH // 2, 
-            bird_y - BIRD_HEIGHT // 2, 
-            BIRD_WIDTH, 
-            BIRD_HEIGHT
-        )
-        
-        if bird_image:
-            screen.blit(bird_image, bird_rect.topleft)
+            if event.type == pygame.MOUSEBUTTONDOWN and not game_active and restart_button is not None:
+                if restart_button.collidepoint(event.pos):
+                    reset_game()
+
+        if game_active:
+            bird_velocity += gravity
+            bird_y += bird_velocity
+
+            bird_rect = pygame.Rect(
+                bird_x - BIRD_WIDTH // 2,
+                bird_y - BIRD_HEIGHT // 2,
+                BIRD_WIDTH,
+                BIRD_HEIGHT,
+            )
+
+            if bird_image:
+                screen.blit(bird_image, bird_rect.topleft)
+            else:
+                pygame.draw.circle(screen, RED, (bird_x, int(bird_y)), bird_radius)
+
+            time_since_last_pipe += dt
+            if time_since_last_pipe > pipe_frequency:
+                pipes.append(create_pipe())
+                time_since_last_pipe = 0
+
+            temp_pipes = []
+            for top, bottom, scored in pipes:
+                top.x -= pipe_velocity
+                bottom.x -= pipe_velocity
+
+                if top.right < bird_x and not scored:
+                    score += 1
+                    scored = True
+
+                if top.right > 0:
+                    temp_pipes.append((top, bottom, scored))
+
+            pipes = temp_pipes
+            draw_pipes(pipes)
+
+            if check_collision(bird_rect, pipes):
+                game_active = False
+
+            score_text = font.render(f"Score: {score}", True, WHITE)
+            screen.blit(score_text, (10, 10))
         else:
-           
-            pygame.draw.circle(screen, RED, (bird_x, int(bird_y)), bird_radius)
-        
+            game_over_text = large_font.render("GAME OVER", True, RED)
+            final_score_text = font.render(f"Final Score: {score}", True, BLACK)
 
-        time_since_last_pipe += dt
-        
-        if time_since_last_pipe > pipe_frequency:
-            pipes.append(create_pipe())
-            time_since_last_pipe = 0
+            screen.blit(game_over_text, (WIDTH // 2 - game_over_text.get_width() // 2, HEIGHT // 2 - 50))
+            screen.blit(final_score_text, (WIDTH // 2 - final_score_text.get_width() // 2, HEIGHT // 2 + 20))
 
-        temp_pipes = []
-        for top, bottom, scored in pipes:
-            top.x -= pipe_velocity
-            bottom.x -= pipe_velocity
-            
-            if top.right < bird_x and not scored:
-                 score += 1
-                 scored = True
-                 
-            if top.right > 0:
-                temp_pipes.append((top, bottom, scored))
-            
-        pipes = temp_pipes
-        draw_pipes(pipes)
+            if restart_button is not None:
+                draw_button(restart_button, "Restart")
 
-        if check_collision(bird_rect, pipes):
-            game_active = False 
+        pygame.display.flip()
 
-        score_text = font.render(f"Score: {score}", True, WHITE)
-        screen.blit(score_text, (10, 10))
-    
-    else: 
-        game_over_text = large_font.render("GAME OVER", True, RED)
-        final_score_text = font.render(f"Final Score: {score}", True, BLACK)
-        
-        screen.blit(game_over_text, (WIDTH // 2 - game_over_text.get_width() // 2, HEIGHT // 2 - 50))
-        screen.blit(final_score_text, (WIDTH // 2 - final_score_text.get_width() // 2, HEIGHT // 2 + 20))
-        
-        if restart_button is not None:
-            draw_button(restart_button, "Restart")
-                
-    pygame.display.flip()
+    pygame.quit()
 
-pygame.quit()
-sys.exit()
+
+if __name__ == "__main__":
+    main()
